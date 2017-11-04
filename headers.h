@@ -11,7 +11,11 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <signal.h>
-
+#include "vector"
+#include "string"
+#include <sstream>
+using namespace std;
+#include<iostream>
 #define SHKEY 300
 
 
@@ -20,13 +24,53 @@
 int* shmaddr;                  //
 //===============================
 
+// process
+struct process
+{
+  long mtype;
+  int id ;
+  int arrival_time;
+  int run_time;
+  int proirty;
+  int waited;
+  int run;
+  int ta;
+  float wta;
+  char status;
+  process(int i, int s ,int n, int p):mtype(1),id(i),arrival_time(s),run_time(n),proirty(p),waited(0),run(n) {}
+  process(){}
+};
+
+vector<process> read_process(istream & is)
+{
+  vector<process> result;
+
+  string ids;
+  int id,arr,run,p;
+   
+  while (is >> ids)
+  {
+    if(ids.length()>1)
+    {
+      is >> ids>>ids>>ids;
+      cout<<ids<<endl;
+    }
+    else
+    {
+      is >> arr >>run >>p;
+      stringstream(ids) >> id;     
+      result.emplace_back(id, arr, run, p);
+    }
+        
+  }
+  return result;
+}
 
 
 int getClk()
 {
-  
-   	int clk=*shmaddr;
-       return clk;		
+  int clk=*shmaddr;
+  return clk;		
 }
 
 
@@ -39,14 +83,13 @@ void initClk()
 {
   int shmid = shmget(SHKEY, 4, 0444);
   while((int)shmid == -1)
-  	{
-          //Make sure that the Clock exists
-        printf("wait, Clock not initialized yet\n");
-        sleep(1);
-        shmid = shmget(SHKEY, 4, 0444);
-  	}
-
-   shmaddr = (int*) shmat(shmid, (void *)0, 0);
+  {
+    //Make sure that the Clock exists
+    printf("wait, Clock not initialized yet\n");
+    sleep(1);
+    shmid = shmget(SHKEY, 4, 0444);
+  }
+  shmaddr = (int*) shmat(shmid, (void *)0, 0);
 }
 
 
@@ -61,7 +104,12 @@ this is the end of simulation it terminates all the system and release resources
 
 void destroyClk(bool terminateAll)
 {
-    shmdt(shmaddr);
-    if(terminateAll)
-      killpg(getpgrp(),SIGINT);
+  shmdt(shmaddr);
+  if(terminateAll)
+  {
+    killpg(getpgrp(),SIGINT);
+  }
 }
+
+
+

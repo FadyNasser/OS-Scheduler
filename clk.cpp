@@ -15,20 +15,21 @@ void cleanup(int x)
 }
 
 /* this file represents the system clock for ease of calculations*/
-int main() {
+int main() 
+{
   printf("Clock Starting\n");
   signal(SIGINT,cleanup);
   int clk=0;
 
- //Create shared memory for one integer variable 4 bytes
- shmid = shmget(SHKEY, 4, IPC_CREAT|0644);
- if((long)shmid == -1)
-  	{
-  	  perror("Error in create shm");
-  	  exit(-1);
-  	}
+  //Create shared memory for one integer variable 4 bytes
+  shmid = shmget(SHKEY, 4, IPC_CREAT|0644);
+  if((long)shmid == -1)
+	{
+ 	  perror("Error in create shm");
+ 	  exit(-1);
+ 	}
 
- int * shmaddr = (int*) shmat(shmid, (void *)0, 0);
+  int * shmaddr = (int*) shmat(shmid, (void *)0, 0);
   if((long)shmaddr == -1)
   {	
   	perror("Error in attach in parent");
@@ -38,10 +39,9 @@ int main() {
   {	
    	*shmaddr = clk;		/* initialize shared memory */
   }
-   while(1)
-   {
-       sleep(1);
-       (*shmaddr)++;
-   }
-
+  while(1)
+  {
+    sleep(1);
+    (*shmaddr)++;
+  }
 }
