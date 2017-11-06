@@ -41,7 +41,7 @@ struct process
   process(){}
 };
 
-vector<process> read_process(istream & is)
+vector<process> read_process(istream & is)//reading the input file
 {
   vector<process> result;
 
@@ -50,16 +50,16 @@ vector<process> read_process(istream & is)
    
   while (is >> ids)
   {
-    if(ids.length()>1)
-    {
-      is >> ids>>ids>>ids;
-      cout<<ids<<endl;
+    if(ids.length()>2)
+    {      
+      is >> ids>>ids>>ids;   //comment line
+      
     }
     else
     {
       is >> arr >>run >>p;
       stringstream(ids) >> id;     
-      result.emplace_back(id, arr, run, p);
+      result.emplace_back(id, arr, run, p); //put it in vector
     }
         
   }
@@ -85,7 +85,7 @@ void initClk()
   while((int)shmid == -1)
   {
     //Make sure that the Clock exists
-    printf("wait, Clock not initialized yet\n");
+    
     sleep(1);
     shmid = shmget(SHKEY, 4, 0444);
   }
@@ -110,6 +110,3 @@ void destroyClk(bool terminateAll)
     killpg(getpgrp(),SIGINT);
   }
 }
-
-
-

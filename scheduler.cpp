@@ -13,40 +13,101 @@
 #include <sstream>
 #include <algorithm>
 #include <queue>
+#include <deque>
+#include <cmath>
+#include <iomanip>
 using namespace std;
 
-//TODO: pausing,clk,killing,sending,get id of buffer
-key_t upq;
-key_t downq;
+
+
+key_t downq;  //key for the down queue
+deque <process> current;
 bool fork_flag=false;
 bool pause_flag=false;
 int check=-1;
+int alog;
+float avg_wta=0;
 std::vector<process> processes;
-
-void handler(int number)
-{
+int timestep=0;
+int avg_count=0;
+int avg_w=0;
+int last_time=0;
+int utlization=0;
+std::vector<float> st_wta;
+void handler(int number) //sigchild handler
+{ 
+   last_time=getClk();
    fork_flag=false;
    pause_flag=false;      
-   //get req stat
-   cout << "Process ID " << processes.begin()->id << " Is Killed" <<endl;
-   processes.erase(processes.begin());
-   cout<<"You Made It "<<endl;
-   int timefin=getClk();
-   cout<<timefin<<endl;
-   cout<<processes.size()<<endl;
-   //delete from vector
+ 
+   avg_count++;
+  
+  if(alog!=3)  // if hpf or sjrt
+  {  
+  
+    utlization+=processes[0].run;   //adding all the run time
+    cout<<"At time "<<timestep<<" process "<<processes[0].id<<" finished";
+    cout<<" arr "<<processes[0].arrival_time;
+    cout<<" total "<<processes[0].run<<" remain "<<processes[0].run_time;
+    cout<<" wait "<<processes[0].waited;
+    processes[0].ta=timestep-processes[0].arrival_time;
+    cout << std::setprecision(2);                  //setting 2 decimal spaces
+    processes[0].wta=float(processes[0].ta)/float(processes[0].run);
+    cout<<" TA "<<processes[0].ta<<" WTA "<<processes[0].wta<<endl;  
+    avg_wta+=processes[0].wta;
+    st_wta.push_back(processes[0].wta);
+    avg_w+=processes[0].waited;
+    processes.erase(processes.begin());  //removing from the vector the first process
+  }
+  else //if round robin
+  {
+    current.front().run_time = 0;
+    utlization+=current.front().run;
+    cout << "At time " << getClk() << " process " << current.front().id << " finished";
+    cout << " arr " << current.front().arrival_time;
+    cout << " total " << current.front().run << " remain " << current.front().run_time;
+    cout << " wait " << current.front().waited ;
+    current.front().ta = getClk() - current.front().arrival_time;
+    cout << std::setprecision(2);
+    current.front().wta = float(current.front().ta) / float(current.front().run);
+    cout << " TA " << current.front().ta << " WTA " << current.front().wta <<endl;
+    avg_wta+=current.front().wta;
+    st_wta.push_back(current.front().wta);
+    avg_w+=current.front().waited;
+    current.pop_front();     //removing the first process
+  }
 }
 
-
-void prohandler(int number)
+void Clear(int)  // sigint handler
 {
-   cout<<"Remaining Time: "<<endl;
-   processes[0].run_time--;
-   cout<<processes[0].run_time;
-   //delete from vector
+
+  FILE *fp2 = freopen("scheduler.perf","w",stdout);
+  float av_wta=0.0;
+  float stand=0.0;
+  float diff=0.0;
+  utlization++;
+  av_wta=avg_wta/float(avg_count);// writing the output of scheduler.perf
+  cout << std::setprecision(2);
+  cout<<"CPU​ ​utilization="<<int((float(utlization)/float(last_time))*100)<<"%"<<endl;
+  cout<<"Avg WTA="<<av_wta<<endl;
+  cout<<"Avg waiting="<<float(avg_w)/float(avg_count)<<endl;
+  for(int u=0;u<st_wta.size();u++)  //calc the std
+  {  
+    diff=st_wta[u]-av_wta;
+    diff=diff*diff;
+    diff=diff/float(avg_count);
+    stand+=diff;
+  }
+  stand=pow(stand,0.5);
+  cout<<"Std​ ​WTA="<<stand<<endl;
+  fclose(fp2);
+	msgctl(downq,IPC_RMID, (struct msqid_ds *) 0);
+	exit(0);
 }
 
-struct by_run
+
+
+struct by_run  // sorting by run time
 {
   bool operator()(process const &a,process const &b) const 
   {
@@ -54,23 +115,19 @@ struct by_run
   }
 };
 
-struct by_runRR
+struct by_priorty  // sorting by priorty
 {
   bool operator()(process const &a,process const &b) const 
   {
-    if (a.run_time == 0 || b.run_time == 0)
-    {
-     return a.run_time < b.run_time;
-    }
+     return ((a.proirty > b.proirty) && (a.arrival_time == b.arrival_time)) || (a.proirty > b.proirty) ;
   }
 };
 
-
-int main(int argc, char* argv[]) 
-{
+int main(int argc, char* argv[])  // scheduler main
+{ 
+  signal(SIGINT,Clear);
   signal (SIGCHLD, handler);
-  signal (SIGUSR1, prohandler);
-  struct sigaction act;
+  struct sigaction act;  //masking the sigchild to work only with exiting
   
   act.sa_handler = handler;
   sigemptyset(&act.sa_mask);
@@ -83,117 +140,173 @@ int main(int argc, char* argv[])
   
   initClk();
   int pid2,Child_PID2=1;
-  upq = msgget(12643,IPC_CREAT | 0644);
-  downq = msgget(12645,IPC_CREAT | 0644);
-  int timestep=0;
+  
+  downq = msgget(12645,IPC_CREAT | 0644); //getting the id of the queue
+  
   int count=0;
   int id_run=-1;
   int remaining=-1;
-  int alog;
+
   int msgq_arr_pr;
   int rec_val;
   char send;
   int Quant;
    
-  //TODO: implement the scheduler :)
+  
   timestep=getClk();
-  cout<<*argv[1]<<endl;        
+          
   alog=*argv[1]-'0'; 
   if(alog==3)
   {
-    //q=strtol(argv[2],argv,10);////////////change//////////
-    Quant=*argv[2]-'0'; 
-    cout<<"Quantam:"<< Quant <<endl;
+    Quant=stoi(argv[2]);
+    
   }
 
   struct process *rec_pro=new process(0,0,0,0);
   count=0;
-    
+  
   //Scheduler Algorithms
   // 1 => Non-Preemptive Highest Priority First      => Aya Mohamed
   // 2 => Shortest Remaining Time Next               => Mohamed Sameh
   // 3 => Round Robin                                => Fady Nasser
 
   if (alog == 1) // Highest Priority First
-  {
-    //FILE *fp = freopen("Test.out","w",stdout); // to output results on test file
-    cout << "\nBegin of Non-Preemptive Highest Priority First"<<endl;
+  {  
+    int size=0;
+    int Num_pro;
+    int rem_time=0;
+    bool forked=false;
 
+  	cout << "\nBegin of Non-Preemptive Highest Priority First"<<endl;
+    FILE *fp = freopen("scheduler.log","w",stdout); // to output results on test file
+    cout << "#At​ time​​ x​ process​​ y​  state​​ arr​ w​ total​​ z​ remain​ ​ y wait​ k"<<endl;
+     
     while (1) // Write the code inside while
     {
+      Num_pro=-1;
+      rec_val=0;
 
+      while (rec_val != -1)   //keep reciving untill empty
+      { 
+        Num_pro++;            //to know how many processes are recieved in a timestep
+        rec_val = msgrcv(downq, rec_pro,sizeof(process)-sizeof(long), 0,IPC_NOWAIT);   
+       
+        if(rec_val != -1)  //append the recieved processes to the vector
+        {
+          processes.emplace_back(rec_pro->id, rec_pro->arrival_time, rec_pro->run_time, rec_pro->proirty);
+          size++;  
+        }
+      }
 
+      if( size > 0 && processes[0].run_time > 0 && rem_time==0 ) // check whether there is a process to run or no
+      {    
 
+        std::sort(processes.begin(),processes.end(),by_priorty()); // sort by priorty
+        cout<<"At time "<<timestep<<" process "<<processes[0].id<<" started";   //print arrival time and more detalied info 
+        cout<<" arr "<<processes[0].arrival_time;
+        cout<<" total "<<processes[0].run<<" remain "<<processes[0].run_time;
+        processes[0].waited = timestep - processes[0].arrival_time;
+        cout<<" wait "<<processes[0].waited<<endl;  
+        send= '0' + processes[0].run_time; 
+        char para2[16];
+        sprintf (para2, "%d", processes[0].run_time);
+        char *argv[]={"./pro.out",para2,NULL};
 
+        rem_time= processes[0].run_time;
+        pid2 = fork(); //Scheduler forking
+        if (pid2 == 0)
+        {  
+          Child_PID2 = execv (argv[0],argv);         
+        }
+        if(Child_PID2 == -1)
+        {
+          cout<<"Error in Forking Process"<<endl;
+        }
+      }
+            
+      if(timestep+1==getClk()) // increase the timestep
+      { 
+        timestep=getClk();
+        if(rem_time > 0 && processes[0].run_time !=0)  //check if a process is exist and run time is greater than 0
+        {
+          processes[0].run_time--;
+          rem_time--;
+        }
+
+        if(rem_time == 0  && forked) //decrease the size when a process is about to die 
+        {
+          size--;
+          forked=false;
+        }
+      }
     }
-
     //upon termination release clock
+    fclose(fp); //Close the output file
     cout << "Processes are Done" << endl;
-    //fclose(fp); //Close the output file
     cout << "Terminating" << endl;
     destroyClk(true);  
   }
+
   else if (alog == 2) 
   {
-    FILE *fp = freopen("scheduler.log","w",stdout);
     cout << "\nBegin of Shortest Remaining Time Next"<<endl;
+    FILE *fp = freopen("scheduler.log","w",stdout);      //opening file scheduler.log to write the output
+    cout << "#At​ time​​ x​ process​​ y​  state​​ arr​ w​ total​​ z​ remain​ ​ y wait​ k"<<endl;
+
     while(1)
     {
       int counter=processes.size();
       rec_val = msgrcv(downq, rec_pro,sizeof(process)-sizeof(long), 0,IPC_NOWAIT);  
-      if(rec_val != -1)
+      if(rec_val != -1)  //if process arrived and recived 
       {
-          cout<<"I Recieved Process at Clock: "<<endl;
+          
           processes.emplace_back(rec_pro->id, rec_pro->arrival_time, rec_pro->run_time, rec_pro->proirty);
-          count++;
-          std::sort(processes.begin(),processes.end(),by_run());
-      }
-     int t=1;
+          count++; //adding it to the vector
+          std::sort(processes.begin(),processes.end(),by_run()); //sort the vector by remaining 
+      }                                                          // runtime
+      int t=1;
       if(fork_flag==true)
       {
-        if(processes[0].id!=id_run )
+        if(processes[0].id!=id_run )// if 1st process 
         {
-          kill(pid2,SIGSTOP);
+          kill(pid2,SIGSTOP);   //stopping the running process as it is not the shortest
           for( t=1;t<processes.size();t++)
           {
-           if (id_run ==processes[t].id)
-           break;
+            if (id_run ==processes[t].id)//get its new location on vector
+            break;
           }
-          processes[t].mtype=pid2;  //// you should make sure of [1],loop untill 
-          pause_flag=true;             // id_run =processes[i]=id_run;
-          cout<<endl<<"At time "<<timestep<<" process "<<processes[t].id<<" stopped ";
+          processes[t].mtype=pid2;  //puting its pid on the mtype 
+          pause_flag=true;          
+          cout<<"At time "<<timestep<<" process "<<processes[t].id<<" stopped";
           cout<<" arr "<<processes[t].arrival_time;
           cout<<" total "<<processes[t].run<<" remain "<<processes[t].run_time;
-          cout<<" wait "<<processes[t].waited;
+          cout<<" wait "<<processes[t].waited<<endl;
         }
       }
       bool choose=false;
       if(fork_flag==false || pause_flag==true)
       {
         if(processes.size()>0)
-         {
+        {
           if(pause_flag==true)
           choose=true;
-         // send= '0'+processes[0].run_time;  
-          char para[16];/////////////////////change//////////////////////
+          
+          char para[16];  //sending the run_time to the process 
           sprintf (para, "%d", processes[0].run_time);
-          //char *argv1[]={"./pro1.out",&send,NULL};
           char *argv[]={"./pro.out",para,NULL};
           fork_flag=true;
           pause_flag=false;
           id_run=processes[0].id;
           remaining=processes[0].run_time;
-          if(processes[0].mtype==1)
+          if(processes[0].mtype==1)   // if it wasnt paused befor fork it
           {
-            cout<<"Process Fork"<<endl;
+            
             timestep=getClk();
-            cout<<endl<<"At time "<<timestep<<" process "<<processes[0].id<<" startted ";
+            cout<<"At time "<<timestep<<" process "<<processes[0].id<<" started";
             cout<<" arr "<<processes[0].arrival_time;
             cout<<" total "<<processes[0].run<<" remain "<<processes[0].run_time;
-            cout<<" wait "<<processes[0].waited;
-            cout<<processes[0].id<<endl;
-            cout<<processes[0].run_time<<endl;
-            pid2 = fork(); //Schduler forking
+            cout<<" wait "<<processes[0].waited<<endl;
+            pid2 = fork(); //Scheduler forking a new process
             if (pid2 == 0)
             {  
               Child_PID2 = execv (argv[0],argv);    
@@ -202,48 +315,38 @@ int main(int argc, char* argv[])
             {
                cout<<"Error in Forking Process"<<endl;
             }
-            cout<<pid2<<endl;
+            
           }
           else 
-          {cout<<endl<<"At time "<<timestep<<" process "<<processes[0].id<<" resumed ";
-          cout<<" arr "<<processes[0].arrival_time;
-          cout<<" total "<<processes[0].run<<" remain "<<processes[0].run_time;
-          cout<<" wait "<<processes[0].waited;
-          cout<<processes[0].id<<endl;
-          cout<<processes[0].run_time<<endl;
+          {  // process should resume
+            cout<<"At time "<<timestep<<" process "<<processes[0].id<<" resumed";
+            cout<<" arr "<<processes[0].arrival_time;
+            cout<<" total "<<processes[0].run<<" remain "<<processes[0].run_time;
+            cout<<" wait "<<processes[0].waited<<endl;
             int pidtorun=processes[0].mtype;
-            cout<<pidtorun;
             processes[0].mtype=1;
-            kill(pidtorun,SIGCONT);
-            cout<<"Should Continue"<<endl;
+            kill(pidtorun,SIGCONT); //let the process to resume
+            
           }
         }
       }  
-      if(timestep+1==getClk()&& fork_flag==true)
-      { //At​ ​ time​ ​ 1 ​ ​ process​ ​ 1 ​ ​ started​ ​ arr​ ​ 1 ​ ​ total​ ​ 6 ​ ​ ​ remain​ ​ 6 ​ ​ wait​ ​ 0
+      if(timestep+1==getClk()&& fork_flag==true)//if new timestep
+      { 
+        
         processes[0].run_time--;
         timestep=getClk();
-         ///////fff/////////////////
-      for(int g=1;g<counter;g++)
-      {
-        processes[g].waited++;
-      }
-      //////////////////////////
-
-        cout<<endl<<"At time "<<timestep<<" process "<<processes[0].id;
-        cout<<" arr "<<processes[0].arrival_time;
-        cout<<" total "<<processes[0].run<<" remain "<<processes[0].run_time;
-        cout<<" wait "<<processes[0].waited;
-        if(processes[0].run_time==0)
-        {processes[0].ta=timestep-processes[0].arrival_time;
-          processes[0].wta=float(processes[0].ta)/float(processes[0].run);
-          cout<<" TA "<<processes[0].ta<<" WTA "<<processes[0].wta;
+        
+        for(int g=1;g<counter;g++)
+        {
+          processes[g].waited++;   //incrementing the waiting time for all processes
+                                  // not running
         }
       }
+      
     }
     //upon termination release clock
-    cout << "Processes are Done" << endl;
     fclose(fp);
+    cout << "Processes are Done" << endl;
     cout << "Terminating" << endl;
     destroyClk(true);  
   }
@@ -252,53 +355,62 @@ int main(int argc, char* argv[])
   // Round Robin Algorithm
   if (alog == 3)
   {
-    int temp = Quant;
-    bool Way = false;
-    //FILE *fp = freopen("Test.out","w",stdout);
+    //deque <process> current;
+    int temp = Quant; //story quant in temp variable to decrement it
+    bool Way = false; //(If the process is more than quantium number or not)
+    bool end = false; //(to break when queue is empty)
+    int timesteps = getClk();
     cout << "\nBegin of Round Robin"<<endl;
-    queue <process> current;
+    FILE *fp = freopen("scheduler.log","w",stdout);
+    cout << "#At​ time​​ x​ process​​ y​  state​​ arr​ w​ total​​ z​ remain​ ​ y wait​ k" <<endl;
     while(1)
     {
+      int counter = current.size();
       rec_val = msgrcv(downq, rec_pro,sizeof(process)-sizeof(long), 0,IPC_NOWAIT);  
 
       if(rec_val != -1)
       {
-        cout<<"I received process at clock :- " << getClk() <<endl;
-        processes.emplace_back(rec_pro->id, rec_pro->arrival_time, rec_pro->run_time, rec_pro->proirty);
+        
+        current.emplace_back(rec_pro->id, rec_pro->arrival_time, rec_pro->run_time, rec_pro->proirty);
         count++;
-        current.push(*rec_pro);
-        cout << "Recieved Process Details " << current.back().id << current.back().arrival_time << current.back().run_time << current.back().proirty << endl;
         current.back().mtype = 0;
-        std::sort(processes.begin(),processes.end(),by_runRR());
+       
       }
 
-      if (processes.size() > 0)
+      if (current.size() > 0)
       {
-        cout << "Current Time is " << getClk() << endl; 
-        cout << "Processor vector Size is " << processes.size() <<endl;
-
-        if (fork_flag == false && current.front().mtype == 0)
+        int timestep = getClk();
+        
+        if (fork_flag == false && current.front().mtype == 0) 
         {
-          cout << "Process will be forking first  " << current.front().id << endl;
-          send= '0'+current.front().run_time;
-          char *argv[]={"./pro.out",&send,NULL};
+          char para3[16];
+          sprintf (para3, "%d", current.front().run_time);
+          char *argv[]={"./pro.out",para3,NULL};
           fork_flag = true;
-          cout<<"Fork Process is done for "<< current.front().id << endl;
-          pid2 = fork(); //Schduler forking
+          cout << "At time " << timestep << " process " << current.front().id << " started";
+          cout << " arr " << current.front().arrival_time;
+          cout << " total " << current.front().run << " remain " << current.front().run_time;
+          cout << " wait " << current.front().waited << endl;
+          
+          pid2 = fork(); //Scheduler forking
           if (pid2 == 0)
           {  
              Child_PID2 = execv (argv[0],argv);    
           }
           if(Child_PID2 == -1)
           {
-             cout<<"Error in Forking Process"<<endl;
+             cout<<"Error in Forking Process"<< endl;
           }
-          cout<<pid2<<endl;
+          
           current.front().mtype = pid2;
         }
         else if (fork_flag == false && current.front().mtype > 0)
         {
-          cout << "Process "<< current.front().id << " Already Forked Before" << endl;
+          //cout << "Process "<< current.front().id << " Already Forked Before" << endl;
+          cout << "At time " << timestep << " process " << current.front().id << " resumed";
+          cout << " arr " << current.front().arrival_time;
+          cout << " total " << current.front().run << " remain " << current.front().run_time;
+          cout << " wait " << current.front().waited << endl;
           fork_flag = true;
         }
         
@@ -307,16 +419,11 @@ int main(int argc, char* argv[])
         
         if (current.front().run_time > Quant || Way == true) 
         {
-          Way = true;
-          cout << "Process " << current.front().id;
-          cout << " has run time = " << current.front().run_time << " Seconds" <<endl;
+          Way = true; //to stay in this part of code not shift to other code
           if (temp > 0) // --temp till it reach 0 and sleep for 1 sec
           {
             int pidtorun = current.front().mtype;
             kill(pidtorun,SIGCONT);
-            cout <<"Process ID (won't stop)" << current.front().id ;
-            cout <<" Should Continue for " << temp << " Seconds ";
-            cout << "out of " << current.front().run_time <<endl;
             temp--;
             sleep(1);
           }
@@ -324,11 +431,14 @@ int main(int argc, char* argv[])
           {
             int pidtostop=current.front().mtype;
             kill(pidtostop,SIGSTOP);
-            cout << "Process " << current.front().id << " Stopped" <<endl;
             current.front().run_time = current.front().run_time - Quant;
+            cout << "At time " << timestep << " process " << current.front().id << " stopped";
+            cout << " arr " << current.front().arrival_time;
+            cout << " total " << current.front().run << " remain " << current.front().run_time;
+            cout << " wait " << current.front().waited << endl;
             process traverse = current.front();
-            current.pop();
-            current.push(traverse);
+            current.pop_front();
+            current.push_back(traverse);
             temp = Quant;
             fork_flag = false;
             Way = false;
@@ -337,12 +447,10 @@ int main(int argc, char* argv[])
         }
         else //if process runtime <= 0
         {
-          if (current.front().run_time > 0) // subtract till it be =0
+          if (current.front().run_time > 0) // subtract till it be = 0
           {
             int pidtorun=current.front().mtype;
             kill(pidtorun,SIGCONT);
-            cout <<"Process ID " <<current.front().id ;
-            cout<<" Should Continue for " << current.front().run_time << " Seconds"<<endl; 
             current.front().run_time --;
             sleep(1);
           }
@@ -350,19 +458,25 @@ int main(int argc, char* argv[])
           { 
             int pidtostop=current.front().mtype;
             kill(pidtostop,SIGCHLD);
-            current.front().run_time = 0;
-            current.pop();
             temp = Quant;
             fork_flag = false;
             sleep(1);
           }
         }
       }
+      
+      if(timesteps != getClk()) //increment waited time for all processes except first as it is the running one
+      {
+        timesteps = getClk();
+        for(int i = 1 ; i < current.size() ; i++)
+        {
+          current[i].waited++; 
+        }
+      }
     }
+    fclose(fp);
     cout << "Processes are Done" << endl;
-    //fclose(fp);
     cout << "Terminating" << endl;
-    destroyClk(true); 
- 
+    destroyClk(true);
   }
 }

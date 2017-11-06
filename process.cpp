@@ -18,8 +18,8 @@ int main(int agrc, char* argv[])
 {   
     //if you need to use the emulated clock uncomment the following line
     //initClk();
-
-    remainingtime=*argv[1] -'0';
+    remainingtime=stoi(argv[1]);
+   // remainingtime=*argv[1] -'0';
     while(remainingtime > 0) 
     {    
        sleep(1);
